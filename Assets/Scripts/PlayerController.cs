@@ -7,7 +7,9 @@ public class PlayerController : MonoBehaviour
     public float maxJumpHeight = 2f; // Maximum height relative to the start of the jump
     public float fallMultiplier = 2.5f; // Multiplier for faster falling
     public float lowJumpMultiplier = 2f; // Multiplier for lower jump height
-    public Transform groundCheck;
+    public BoxCollider2D groundCheck;
+    public BoxCollider2D wallCheckHaut;
+    public BoxCollider2D wallCheckBas;
     public LayerMask groundLayer;
     public float checkRadius = 0.2f;
     public float runVelocityThreshold = 0.1f;
@@ -15,6 +17,7 @@ public class PlayerController : MonoBehaviour
     private Rigidbody2D rb;
     private Animator animator;
     private bool isGrounded;
+    private bool isWallSliding;
     private float moveInput;
     private bool facingRight = true;
     private float jumpStartY;
@@ -25,12 +28,19 @@ public class PlayerController : MonoBehaviour
         rb = GetComponent<Rigidbody2D>();
         animator = GetComponent<Animator>();
     }
-
     void Update()
     {
         // Check if the player is grounded
-        isGrounded = Physics2D.OverlapCircle(groundCheck.position, checkRadius, groundLayer);
+        isGrounded = groundCheck.IsTouchingLayers(groundLayer);
         animator.SetBool("IsGrounded", isGrounded);
+
+        // Check if both wallCheck colliders are touching a wall (groundLayer)
+        if (!isGrounded && wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer))
+        {
+            // Player is wall sliding
+            isWallSliding = true;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f); // Slide down the wall
+        }
 
         // Get horizontal input
         moveInput = Input.GetAxisRaw("Horizontal");
