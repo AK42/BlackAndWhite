@@ -4,20 +4,28 @@ public class PlayerController : MonoBehaviour
 {
     public float moveSpeed = 5f;
     public float jumpForce = 15f;
-    public float maxJumpHeight = 2f; // Maximum height relative to the start of the jump
-    public float fallMultiplier = 2.5f; // Multiplier for faster falling
-    public float lowJumpMultiplier = 2f; // Multiplier for lower jump height
+    public float maxJumpHeight = 2f;
+    public float fallMultiplier = 2.5f;
+    public float lowJumpMultiplier = 2f;
     public BoxCollider2D groundCheck;
     public BoxCollider2D wallCheckHaut;
     public BoxCollider2D wallCheckBas;
     public LayerMask groundLayer;
     public float checkRadius = 0.2f;
     public float runVelocityThreshold = 0.1f;
+    public float wallJumpForce = 15f;
+    public float wallJumpHorizontalForce = 8f;
+    public float wallJumpInputLockTime = 0.2f;
+    public float sameWallJumpUpwardMultiplier = 0.6f;
 
+    private int lastWallJumpDirection = 0; // -1 for left, 1 for right, 0 for none
+    private float wallJumpInputLockCounter = 0f;
+    private float lockedMoveInput = 0f;
     private Rigidbody2D rb;
     private Animator animator;
     private bool isGrounded;
     private bool isWallSliding;
+    private int currentWallDirection = 0; // -1 for left, 1 for right, 0 for none
     private float moveInput;
     private bool facingRight = true;
     private float jumpStartY;
@@ -28,36 +36,119 @@ public class PlayerController : MonoBehaviour
         rb = GetComponent<Rigidbody2D>();
         animator = GetComponent<Animator>();
     }
+
     void Update()
     {
-        // Check if the player is grounded
+        UpdateGroundedState();
+        UpdateWallSlidingState();
+        ReadInput();
+        UpdateRunningAnimation();
+        HandleJumpInput();
+        ApplyVariableGravity();
+        EnforceMaxJumpHeight();
+        HandleSpriteFlip();
+        UpdateJumpAndFallAnimations();
+    }
+
+    void FixedUpdate()
+    {
+        ApplyHorizontalMovement();
+    }
+
+    // --- Separation of Concerns Methods ---
+
+    void UpdateGroundedState()
+    {
         isGrounded = groundCheck.IsTouchingLayers(groundLayer);
         animator.SetBool("IsGrounded", isGrounded);
+    }
 
-        // Check if both wallCheck colliders are touching a wall (groundLayer)
-        if (!isGrounded && wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer))
+    void UpdateWallSlidingState()
+    {
+        bool onLeftWall = wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded && moveInput < 0;
+        bool onRightWall = wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded && moveInput > 0;
+        bool touchingWall = onLeftWall || onRightWall;
+
+        if (onLeftWall && rb.linearVelocity.y < 0)
         {
-            // Player is wall sliding
             isWallSliding = true;
-            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f); // Slide down the wall
+            currentWallDirection = -1;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f);
         }
+        else if (onRightWall && rb.linearVelocity.y < 0)
+        {
+            isWallSliding = true;
+            currentWallDirection = 1;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f);
+        }
+        else
+        {
+            isWallSliding = false;
+            currentWallDirection = 0;
+        }
+    }
 
-        // Get horizontal input
-        moveInput = Input.GetAxisRaw("Horizontal");
+    void ReadInput()
+    {
+        if (wallJumpInputLockCounter > 0f)
+        {
+            moveInput = lockedMoveInput;
+            wallJumpInputLockCounter -= Time.deltaTime;
+        }
+        else
+        {
+            moveInput = Input.GetAxisRaw("Horizontal");
+        }
+    }
 
-        // Check velocity for running animation
+    void UpdateRunningAnimation()
+    {
         bool isRunning = Mathf.Abs(rb.linearVelocity.x) > runVelocityThreshold;
         animator.SetBool("IsRunning", isRunning);
+    }
 
-        // Handle jumping
-        if (Input.GetButtonDown("Jump") && isGrounded)
+    void HandleJumpInput()
+    {
+        if (Input.GetButtonDown("Jump"))
         {
-            rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce);
-            jumpStartY = transform.position.y; // Store the initial Y position
-            jumped = true;
-        }
+            if (isGrounded)
+            {
+                rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce);
+                jumpStartY = transform.position.y;
+                jumped = true;
+            }
+            else if (IsTouchingWall() && currentWallDirection != 0)
+            {
+                float jumpDir = -currentWallDirection;
 
-        // Modify gravity for faster fall
+                // Check if jumping from the same wall as last time
+                float upwardForce = wallJumpForce;
+                if (lastWallJumpDirection == currentWallDirection)
+                {
+                    upwardForce *= sameWallJumpUpwardMultiplier;
+                }
+
+                rb.linearVelocity = new Vector2(jumpDir * wallJumpHorizontalForce, upwardForce);
+
+                if ((facingRight && jumpDir < 0) || (!facingRight && jumpDir > 0))
+                {
+                    Flip();
+                }
+
+                jumpStartY = transform.position.y;
+                jumped = true;
+
+                wallJumpInputLockCounter = wallJumpInputLockTime;
+                lockedMoveInput = jumpDir;
+
+                // Update last wall jump direction
+                lastWallJumpDirection = currentWallDirection;
+            }
+        }
+    }
+
+    void ApplyVariableGravity()
+    {
         if (rb.linearVelocity.y < 0)
         {
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.deltaTime;
@@ -66,29 +157,39 @@ public class PlayerController : MonoBehaviour
         {
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.deltaTime;
         }
+    }
 
-        // Apply gravity when max jump height is reached
+    void EnforceMaxJumpHeight()
+    {
         if (jumped && transform.position.y >= jumpStartY + maxJumpHeight)
         {
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0);
-            jumped = false; // Reset jump state
+            jumped = false;
         }
+    }
 
-        // Flip the sprite based on direction
+    void HandleSpriteFlip()
+    {
         if ((facingRight && moveInput < 0) || (!facingRight && moveInput > 0))
         {
             Flip();
         }
+    }
 
-        // Update animator parameters
+    void UpdateJumpAndFallAnimations()
+    {
         animator.SetBool("IsJumping", !isGrounded && rb.linearVelocity.y > 0);
         animator.SetBool("IsFalling", !isGrounded && rb.linearVelocity.y < -2);
     }
 
-    void FixedUpdate()
+    void ApplyHorizontalMovement()
     {
-        // Apply horizontal movement
-        rb.linearVelocity = new Vector2(moveInput * moveSpeed, rb.linearVelocity.y);
+        // Only apply normal movement if not in wall jump input lock
+        if (wallJumpInputLockCounter <= 0f)
+        {
+            rb.linearVelocity = new Vector2(moveInput * moveSpeed, rb.linearVelocity.y);
+        }
+        // else: do nothing, keep the wall jump velocity
     }
 
     void Flip()
@@ -97,5 +198,9 @@ public class PlayerController : MonoBehaviour
         Vector3 scale = transform.localScale;
         scale.x *= -1;
         transform.localScale = scale;
+    }
+    bool IsTouchingWall()
+    {
+        return wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded;
     }
 }
