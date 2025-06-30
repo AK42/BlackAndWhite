@@ -86,6 +86,8 @@ public class PlayerController : MonoBehaviour
             isWallSliding = false;
             currentWallDirection = 0;
         }
+        // Set animator parameter for wall sliding
+        animator.SetBool("IsWallSliding", isWallSliding);
     }
 
     void ReadInput()

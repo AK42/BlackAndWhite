@@ -4050,10 +4050,10 @@ MonoBehaviour:
     m_Bits: 8
   checkRadius: 0.2
   runVelocityThreshold: 1.5
-  wallJumpForce: 6
-  wallJumpHorizontalForce: 5
+  wallJumpForce: 6.5
+  wallJumpHorizontalForce: 0.55
   wallJumpInputLockTime: 0.18
-  sameWallJumpUpwardMultiplier: 0.81
+  sameWallJumpUpwardMultiplier: 0.8
 --- !u!95 &1267109521
 Animator:
   serializedVersion: 7
