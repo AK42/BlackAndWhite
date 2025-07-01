@@ -17,6 +17,7 @@ public class PlayerController : MonoBehaviour
     public float wallJumpHorizontalForce = 8f;
     public float wallJumpInputLockTime = 0.2f;
     public float sameWallJumpUpwardMultiplier = 0.6f;
+    public float wallJumpReadyTime = 0.1f; // Time after grabbing wall before wall jump is allowed
 
     private int lastWallJumpDirection = 0; // -1 for left, 1 for right, 0 for none
     private float wallJumpInputLockCounter = 0f;
@@ -30,6 +31,9 @@ public class PlayerController : MonoBehaviour
     private bool facingRight = true;
     private float jumpStartY;
     private bool jumped = false;
+    private float wallJumpReadyCounter = 0f;
+    private bool wallJumpReady = false;
+    private bool wasWallSliding = false;
 
     void Start()
     {
@@ -69,24 +73,38 @@ public class PlayerController : MonoBehaviour
         bool onRightWall = wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded && moveInput > 0;
         bool touchingWall = onLeftWall || onRightWall;
 
-        if (onLeftWall && rb.linearVelocity.y < 0)
+        if ((onLeftWall && rb.linearVelocity.y < 1) || (onRightWall && rb.linearVelocity.y < 1))
         {
             isWallSliding = true;
-            currentWallDirection = -1;
+            currentWallDirection = onLeftWall ? -1 : 1;
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f);
-        }
-        else if (onRightWall && rb.linearVelocity.y < 0)
-        {
-            isWallSliding = true;
-            currentWallDirection = 1;
-            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f);
+
+            // Start wall jump ready timer only when first starting to wall slide
+            if (!wasWallSliding)
+            {
+                wallJumpReady = false;
+                wallJumpReadyCounter = wallJumpReadyTime;
+            }
         }
         else
         {
             isWallSliding = false;
             currentWallDirection = 0;
+            wallJumpReady = false;
+            wallJumpReadyCounter = 0f;
         }
-        // Set animator parameter for wall sliding
+
+        // Update wall jump ready timer
+        if (isWallSliding && !wallJumpReady)
+        {
+            wallJumpReadyCounter -= Time.deltaTime;
+            if (wallJumpReadyCounter <= 0f)
+            {
+                wallJumpReady = true;
+            }
+        }
+
+        wasWallSliding = isWallSliding;
         animator.SetBool("IsWallSliding", isWallSliding);
     }
 
@@ -119,7 +137,7 @@ public class PlayerController : MonoBehaviour
                 jumpStartY = transform.position.y;
                 jumped = true;
             }
-            else if (IsTouchingWall() && currentWallDirection != 0)
+            else if (IsTouchingWall() && currentWallDirection != 0 && wallJumpReady)
             {
                 float jumpDir = -currentWallDirection;
 
@@ -145,6 +163,9 @@ public class PlayerController : MonoBehaviour
 
                 // Update last wall jump direction
                 lastWallJumpDirection = currentWallDirection;
+
+                wallJumpReady = false;
+                wallJumpReadyCounter = 0f;
             }
         }
     }

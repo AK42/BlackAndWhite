@@ -4051,9 +4051,10 @@ MonoBehaviour:
   checkRadius: 0.2
   runVelocityThreshold: 1.5
   wallJumpForce: 6.5
-  wallJumpHorizontalForce: 0.55
+  wallJumpHorizontalForce: 5.5
   wallJumpInputLockTime: 0.18
   sameWallJumpUpwardMultiplier: 0.8
+  wallJumpReadyTime: 0.11
 --- !u!95 &1267109521
 Animator:
   serializedVersion: 7
