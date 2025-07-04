@@ -2,38 +2,49 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
+    [Header("Movement")]
     public float moveSpeed = 5f;
     public float jumpForce = 15f;
     public float maxJumpHeight = 2f;
+
+    [Header("Physics")]
     public float fallMultiplier = 2.5f;
     public float lowJumpMultiplier = 2f;
+
+    [Header("Wall Interactions")]
+    public float wallSlideSpeed = 1.2f;
+    public float wallJumpForce = 15f;
+    public float wallJumpHorizontalForce = 8f;
+    public float wallJumpInputLockTime = 0.2f;
+    public float wallJumpReadyTime = 0.1f;
+
+    [Header("Checks & Thresholds")]
     public BoxCollider2D groundCheck;
     public BoxCollider2D wallCheckHaut;
     public BoxCollider2D wallCheckBas;
     public LayerMask groundLayer;
-    public float checkRadius = 0.2f;
     public float runVelocityThreshold = 0.1f;
-    public float wallJumpForce = 15f;
-    public float wallJumpHorizontalForce = 8f;
-    public float wallJumpInputLockTime = 0.2f;
-    public float sameWallJumpUpwardMultiplier = 0.6f;
-    public float wallJumpReadyTime = 0.1f; // Time after grabbing wall before wall jump is allowed
+    public float fallVelocityThreshold = -2f;
+    public float wallSlideVelocityThreshold = 0.5f;
 
-    private int lastWallJumpDirection = 0; // -1 for left, 1 for right, 0 for none
-    private float wallJumpInputLockCounter = 0f;
-    private float lockedMoveInput = 0f;
+    // Private state variables
     private Rigidbody2D rb;
     private Animator animator;
+
     private bool isGrounded;
     private bool isWallSliding;
-    private int currentWallDirection = 0; // -1 for left, 1 for right, 0 for none
+    private int currentWallDirection; // -1 for left, 1 for right
     private float moveInput;
     private bool facingRight = true;
     private float jumpStartY;
-    private bool jumped = false;
-    private float wallJumpReadyCounter = 0f;
-    private bool wallJumpReady = false;
-    private bool wasWallSliding = false;
+    private bool jumped;
+
+    // Wall jump state variables
+    private float wallJumpInputLockCounter;
+    private float lockedMoveInput;
+    private float wallJumpReadyCounter;
+    private bool wallJumpReady;
+    private bool wasWallSliding;
 
     void Start()
     {
@@ -43,58 +54,63 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
+        // Order of operations is important for state management
         UpdateGroundedState();
+        ReadInput(); // Read input before using it for state checks
         UpdateWallSlidingState();
-        ReadInput();
-        UpdateRunningAnimation();
+        
         HandleJumpInput();
-        ApplyVariableGravity();
-        EnforceMaxJumpHeight();
         HandleSpriteFlip();
-        UpdateJumpAndFallAnimations();
+        UpdateAllAnimations();
     }
 
     void FixedUpdate()
     {
+        // Physics-related updates
         ApplyHorizontalMovement();
+        ApplyVariableGravity();
+        EnforceMaxJumpHeight();
     }
 
-    // --- Separation of Concerns Methods ---
+    // --- State Update Methods ---
 
     void UpdateGroundedState()
     {
         isGrounded = groundCheck.IsTouchingLayers(groundLayer);
-        animator.SetBool("IsGrounded", isGrounded);
     }
 
     void UpdateWallSlidingState()
     {
-        bool onLeftWall = wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded && moveInput < 0;
-        bool onRightWall = wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded && moveInput > 0;
-        bool touchingWall = onLeftWall || onRightWall;
+        bool isTouchingWall = IsTouchingWall();
+        bool canStartSliding = isTouchingWall && !isGrounded && rb.linearVelocity.y < wallSlideVelocityThreshold;
 
-        if ((onLeftWall && rb.linearVelocity.y < 1) || (onRightWall && rb.linearVelocity.y < 1))
+        if (canStartSliding)
         {
-            isWallSliding = true;
-            currentWallDirection = onLeftWall ? -1 : 1;
-            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -1.2f);
-
-            // Start wall jump ready timer only when first starting to wall slide
-            if (!wasWallSliding)
+            // Determine wall direction based on which side has contact
+            currentWallDirection = wallCheckHaut.transform.position.x > transform.position.x ? 1 : -1;
+            
+            if (!wasWallSliding) // Just started touching the wall
             {
                 wallJumpReady = false;
                 wallJumpReadyCounter = wallJumpReadyTime;
             }
+            
+            isWallSliding = true;
         }
         else
         {
             isWallSliding = false;
             currentWallDirection = 0;
             wallJumpReady = false;
-            wallJumpReadyCounter = 0f;
         }
 
-        // Update wall jump ready timer
+        // Handle the actual slide speed
+        if (isWallSliding)
+        {
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -wallSlideSpeed);
+        }
+
+        // Update the timer for when a wall jump becomes available
         if (isWallSliding && !wallJumpReady)
         {
             wallJumpReadyCounter -= Time.deltaTime;
@@ -105,8 +121,9 @@ public class PlayerController : MonoBehaviour
         }
 
         wasWallSliding = isWallSliding;
-        animator.SetBool("IsWallSliding", isWallSliding);
     }
+
+    // --- Input & Movement Methods ---
 
     void ReadInput()
     {
@@ -119,12 +136,6 @@ public class PlayerController : MonoBehaviour
         {
             moveInput = Input.GetAxisRaw("Horizontal");
         }
-    }
-
-    void UpdateRunningAnimation()
-    {
-        bool isRunning = Mathf.Abs(rb.linearVelocity.x) > runVelocityThreshold;
-        animator.SetBool("IsRunning", isRunning);
     }
 
     void HandleJumpInput()
@@ -140,88 +151,85 @@ public class PlayerController : MonoBehaviour
             else if (IsTouchingWall() && currentWallDirection != 0 && wallJumpReady)
             {
                 float jumpDir = -currentWallDirection;
-
-                // Check if jumping from the same wall as last time
-                float upwardForce = wallJumpForce;
-                if (lastWallJumpDirection == currentWallDirection)
-                {
-                    upwardForce *= sameWallJumpUpwardMultiplier;
-                }
-
-                rb.linearVelocity = new Vector2(jumpDir * wallJumpHorizontalForce, upwardForce);
-
-                if ((facingRight && jumpDir < 0) || (!facingRight && jumpDir > 0))
-                {
-                    Flip();
-                }
-
+                rb.linearVelocity = new Vector2(jumpDir * wallJumpHorizontalForce, wallJumpForce);
+                
                 jumpStartY = transform.position.y;
                 jumped = true;
-
+                
                 wallJumpInputLockCounter = wallJumpInputLockTime;
                 lockedMoveInput = jumpDir;
-
-                // Update last wall jump direction
-                lastWallJumpDirection = currentWallDirection;
-
+                
                 wallJumpReady = false;
-                wallJumpReadyCounter = 0f;
             }
+        }
+    }
+
+    void ApplyHorizontalMovement()
+    {
+        if (wallJumpInputLockCounter <= 0f)
+        {
+            rb.linearVelocity = new Vector2(moveInput * moveSpeed, rb.linearVelocity.y);
         }
     }
 
     void ApplyVariableGravity()
     {
+        if (isWallSliding) return; // No extra gravity while sliding
+
         if (rb.linearVelocity.y < 0)
         {
-            rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.deltaTime;
+            rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.fixedDeltaTime;
         }
         else if (rb.linearVelocity.y > 0 && !Input.GetButton("Jump"))
         {
-            rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.deltaTime;
+            rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.fixedDeltaTime;
         }
     }
 
     void EnforceMaxJumpHeight()
     {
-        if (jumped && transform.position.y >= jumpStartY + maxJumpHeight)
+        if (jumped && rb.linearVelocity.y > 0 && transform.position.y >= jumpStartY + maxJumpHeight)
         {
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0);
             jumped = false;
         }
     }
 
+    // --- Animation & Visuals ---
+
     void HandleSpriteFlip()
     {
-        if ((facingRight && moveInput < 0) || (!facingRight && moveInput > 0))
-        {
-            Flip();
-        }
-    }
-
-    void UpdateJumpAndFallAnimations()
-    {
-        animator.SetBool("IsJumping", !isGrounded && rb.linearVelocity.y > 0);
-        animator.SetBool("IsFalling", !isGrounded && rb.linearVelocity.y < -2);
-    }
-
-    void ApplyHorizontalMovement()
-    {
-        // Only apply normal movement if not in wall jump input lock
+        // Flip only if not locked by a wall jump
         if (wallJumpInputLockCounter <= 0f)
         {
-            rb.linearVelocity = new Vector2(moveInput * moveSpeed, rb.linearVelocity.y);
+            if (moveInput > 0 && !facingRight)
+            {
+                Flip();
+            }
+            else if (moveInput < 0 && facingRight)
+            {
+                Flip();
+            }
         }
-        // else: do nothing, keep the wall jump velocity
+    }
+
+    void UpdateAllAnimations()
+    {
+        animator.SetBool("IsGrounded", isGrounded);
+        animator.SetBool("IsWallSliding", isWallSliding);
+        animator.SetBool("IsRunning", Mathf.Abs(rb.linearVelocity.x) > runVelocityThreshold);
+        animator.SetBool("IsJumping", !isGrounded && !isWallSliding && rb.linearVelocity.y > 0);
+        animator.SetBool("IsFalling", !isGrounded && !isWallSliding && rb.linearVelocity.y < fallVelocityThreshold);
     }
 
     void Flip()
     {
         facingRight = !facingRight;
-        Vector3 scale = transform.localScale;
-        scale.x *= -1;
-        transform.localScale = scale;
+        transform.localScale = new Vector3(transform.localScale.x * -1, transform.localScale.y, transform.localScale.z);
     }
+
+    // --- Helper Methods ---
+
     bool IsTouchingWall()
     {
         return wallCheckHaut.IsTouchingLayers(groundLayer) && wallCheckBas.IsTouchingLayers(groundLayer) && !isGrounded;
